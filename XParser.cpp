@@ -242,7 +242,9 @@ struct XParser : public grammar<XParser>
 // @brief:  Xからmshへの変換
 // @update: 2011/10/08 by Odashi
 // @args:
-//     const char *data: Xフォーマットを格納した文字列（終端'\0'）
+//     const char *filename: 出力先ファイル名
+//     const char *data:     Xフォーマットを格納した文字列（終端'\0'）
+//     int avail:            終端の'\0'を除く文字列長
 // @ret:
 //     void: 
 // @note:
