@@ -156,6 +156,7 @@ struct XSkipParser : public grammar<XSkipParser>
 			BOOST_SPIRIT_DEBUG_TRACE_NODE(skip_p, false);
 		};
 		
+		// 開始記号
 		const rule<ScannarT> &start() const
 		{
 			return skip_p;
@@ -181,6 +182,7 @@ struct XParser : public grammar<XParser>
 	{
 		rule<ScannarT> keyword, uuid, ident, document, templ, member, opening, dataset;
 	
+		// 構文定義
 		definition(const XParser &self)
 		{
 			keyword
@@ -225,6 +227,7 @@ struct XParser : public grammar<XParser>
 			BOOST_SPIRIT_DEBUG_RULE(dataset);
 		}
 		
+		// 開始記号
 		const rule<ScannarT> &start() const
 		{
 			return document;
