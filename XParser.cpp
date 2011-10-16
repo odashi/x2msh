@@ -1,7 +1,5 @@
 // XParser.cpp
 #include <iostream>
-#include <fstream>
-#include <string>
 #include <stack>
 #define BOOST_SPIRIT_USE_OLD_NAMESPACE
 //#define BOOST_SPIRIT_DEBUG
@@ -13,79 +11,85 @@ using namespace boost::spirit;
 
 ////////////////////////////////////////////////////////////////////////////////
 // 
-// struct MshWriter
+// struct XDataListFactory
 // 
-// @brief:  mshの書き出し器
-// @update: 2011/10/08 by Odashi
-// @note:
-//     Mesh, MeshMaterialList, Materialのみ認識する
+// @brief:  XDataListの書き出し器
+// @update: 2011/10/11 by Odashi
 // 
 ////////////////////////////////////////////////////////////////////////////////
-class MshWriter
+class XDataListFactory
 {
-	ofstream fout;
-	stack<bool> flag_stack;
+	XDataList &data_list_;
+	stack<bool> flag_stack_;
 	
-	MshWriter(const MshWriter &);
-public:
-	enum Id
-	{
-		ID_TEMPLATE_END       = 0,
-		ID_MESH               = 1,
-		ID_MESH_MATERIAL_LIST = 2,
-		ID_MATERIAL           = 3
-	};
-
-	MshWriter(const char *filename)
-	: fout(filename, ios::binary)
-	{}
+	XDataListFactory(const XDataListFactory &);
 	
-	// ヘッダの書き出し
-	void Header()
+	// テンプレートの種類をIDに変換
+	short ToId(const string &name)
 	{
-		fout.write("MSH ", 4);
+		if (name == "Mesh")             return XDataList::ID_MESH;
+		if (name == "MeshMaterialList") return XDataList::ID_MESH_MATERIAL_LIST;
+		if (name == "MeshNormals")      return XDataList::ID_MESH_NORMALS;
+		if (name == "Material")         return XDataList::ID_MATERIAL;
+		
+		// 知らないテンプレート
+		return -1;
 	}
+	
+public:
+	XDataListFactory(XDataList &data_list)
+	: data_list_(data_list)
+	{}
 	
 	// データセットの始め
 	void Begin(const string &name)
 	{
-		bool flag = true;
-		int id = 0;
+		short id;
 		
-		if (name == "Mesh")                  id = ID_MESH;
-		else if (name == "MeshMaterialList") id = ID_MESH_MATERIAL_LIST;
-		else if (name == "Material")         id = ID_MATERIAL;
-		else flag = false;
+		if (flag_stack_.empty())
+			// スタックが空なら新しいデータセットは有効
+			id = ToId(name);
+		else if (flag_stack_.top())
+			// 親データセットが有効なら新しいデータセットも有効
+			id = ToId(name);
+		else
+			// 親データセットが無効なので新しいデータセットは強制的に無効
+			id = -1;
 		
-		if (flag)
-			fout.write((const char *)&id, 4);
-		
-		flag_stack.push(flag);
+		if (id != -1)
+		{
+			// データセットは有効
+			data_list_.id.push_back(id);
+			flag_stack_.push(true);
+		}
+		else
+			// データセットは無効
+			flag_stack_.push(false);
 	}
 	
 	// データセットの終わり
 	void End()
 	{
-		if (flag_stack.top())
-		{
-			int id = ID_TEMPLATE_END;
-			fout.write((const char *)&id, 4);
-		}
-		flag_stack.pop();
+		if (flag_stack_.top())
+			data_list_.id.push_back(XDataList::ID_DATASET_END);
+		
+		flag_stack_.pop();
 	}
 	
-	// 整数値を書き出す
-	void WriteInt(int val)
+	// 整数値を追加
+	void AddInt(short val)
 	{
-		if (flag_stack.top())
-			fout.write((const char *)&val, 4);
+		// 現在のデータセットが有効なら追加
+		if (flag_stack_.top())
+			data_list_.int_val.push_back(val);
 	}
 	
-	// 実数値を書き出す
-	// 実際の値の10000倍を整数として書き出す。
-	void WriteReal(double val)
+	// 実数値を追加
+	void AddReal(double val)
 	{
-		WriteInt((int)(val * 10000.0));
+		// 現在のデータセットが有効なら追加
+		if (flag_stack_.top())
+			data_list_.real_val.push_back(val);
 	}
 };
 
@@ -94,52 +98,52 @@ public:
 // ファンクタ
 // 
 ////////////////////////////////////////////////////////////////////////////////
-struct match_begin
+struct add_begin
 {
-	MshWriter &writer;
-	match_begin(MshWriter &w) : writer(w) {}
+	XDataListFactory &factory_;
+	add_begin(XDataListFactory &factory) : factory_(factory) {}
 	void operator()(char const *first, char const *last) const
 	{
-		writer.Begin(string(first, last));
+		factory_.Begin(string(first, last));
 	}
 };
-struct match_end
+struct add_end
 {
-	MshWriter &writer;
-	match_end(MshWriter &w) : writer(w) {}
+	XDataListFactory &factory_;
+	add_end(XDataListFactory &factory) : factory_(factory) {}
 	void operator()(char const *first, char const *last) const
 	{
-		writer.End();
+		factory_.End();
 	}
 };
-struct match_int
+struct add_int
 {
-	MshWriter &writer;
-	match_int(MshWriter &w) : writer(w) {}
+	XDataListFactory &factory_;
+	add_int(XDataListFactory &factory) : factory_(factory) {}
 	void operator()(int val) const
 	{
-		writer.WriteInt(val);
+		factory_.AddInt(val);
 	}
 };
-struct match_real
+struct add_real
 {
-	MshWriter &writer;
-	match_real(MshWriter &w) : writer(w) {}
+	XDataListFactory &factory_;
+	add_real(XDataListFactory &factory) : factory_(factory) {}
 	void operator()(double val) const
 	{
-		writer.WriteReal(val);
+		factory_.AddReal(val);
 	}
 };
 
 ////////////////////////////////////////////////////////////////////////////////
 // 
-// struct XSkipParser
+// struct XSkip
 // 
 // @brief:  Xのスキップパーサ（コメント、空白文字）
-// @update: 2011/10/08 by Odashi
+// @update: 2011/10/12 by Odashi
 // 
 ////////////////////////////////////////////////////////////////////////////////
-struct XSkipParser : public grammar<XSkipParser>
+struct XSkip : public grammar<XSkip>
 {
 	template<typename ScannarT>
 	struct definition
@@ -147,7 +151,7 @@ struct XSkipParser : public grammar<XSkipParser>
 		rule<ScannarT> skip_p;
 		
 		// 構文定義
-		definition(const XSkipParser &self)
+		definition(const XSkip &self)
 		{
 			skip_p = +space_p | comment_p("//") | comment_p('#');
 			
@@ -166,16 +170,19 @@ struct XSkipParser : public grammar<XSkipParser>
 
 ////////////////////////////////////////////////////////////////////////////////
 // 
-// struct XParser
+// struct XGrammar
 // 
 // @brief:  Xの構文定義
-// @update: 2011/10/08 by Odashi
+// @update: 2011/10/11 by Odashi
 // 
 ////////////////////////////////////////////////////////////////////////////////
-struct XParser : public grammar<XParser>
+struct XGrammar : public grammar<XGrammar>
 {
-	MshWriter &writer;
-	XParser(MshWriter &w) : writer(w) {}
+	XDataListFactory &factory_;
+	
+	XGrammar(XDataListFactory &factory)
+	: factory_(factory)
+	{}
 
 	template<typename ScannarT>
 	struct definition
@@ -183,7 +190,7 @@ struct XParser : public grammar<XParser>
 		rule<ScannarT> keyword, uuid, ident, document, templ, member, opening, dataset;
 	
 		// 構文定義
-		definition(const XParser &self)
+		definition(const XGrammar &self)
 		{
 			keyword
 				= str_p("array") | "template";
@@ -207,14 +214,14 @@ struct XParser : public grammar<XParser>
 			opening
 				= '[' >> (("...")  | ((ident >> !uuid) % ',')) >> ']';
 			dataset
-				=  ident[match_begin(self.writer)]
+				=  ident[add_begin(self.factory_)]
 				>> !ident
 				>> '{'
 				>> !uuid
 				// strict_real_pを先に判定
-				>> *(strict_real_p[match_real(self.writer)] | int_p[match_int(self.writer)] | ';' | ',' | dataset)
+				>> *(strict_real_p[add_real(self.factory_)] | int_p[add_int(self.factory_)] | ';' | ',' | dataset)
 				>> '}'
-				>> eps_p[match_end(self.writer)];
+				>> eps_p[add_end(self.factory_)];
 
 			// デバッグ出力
 			BOOST_SPIRIT_DEBUG_RULE(keyword);
@@ -237,47 +244,37 @@ struct XParser : public grammar<XParser>
 
 //------------------------------------------------------------------------------
 // 
-// function x2msh()
+// function XParser::Parse()
 // 
-// @brief:  Xからmshへの変換
-// @update: 2011/10/08 by Odashi
+// @brief:  XファイルからXDataListを生成
+// @update: 2011/10/12 by Odashi
 // @args:
-//     const char *filename: 出力先ファイル名
-//     const char *data:     Xフォーマットを格納した文字列（終端'\0'）
-//     int avail:            終端の'\0'を除く文字列長
+//     const char *data:     Xフォーマットを格納した'\0'で終わる文字列
+//     size_t avail:         '\0'を含まない文字列の長さ
+//     XDataList &data_list: データの格納先
 // @ret:
 //     void: 
 // @note:
 //     テキスト版Xのみ対応。
 //     template構文などは無視します。
-//     認識可能なテンプレートはMshWriterを参照。
 // 
 //------------------------------------------------------------------------------
-void x2msh(const char *filename, const char *data, int avail)
+void XParser::Parse(const char *data, size_t avail, XDataList &data_list)
 {
 	// 最初の16バイトはヘッダなので無視（サイズだけ確認しておく）
 	if (avail < 16)
-	{
-		cerr << "Header mismatched." << endl;
-		throw X2MshException();
-	}
+		throw Exception("Header mismatched.");
 	
 	// 書き出し器
-	MshWriter writer(filename);
-	writer.Header();
+	XDataListFactory factory(data_list);
 	
 	// 文法
-	XParser     g(writer);
-	XSkipParser skip_p;
+	XGrammar g(factory);
+	XSkip    skip_p;
 	
 	// 解析の開始
 	parse_info<> r = parse(data+16, g, skip_p);
 	
 	if (!r.hit)
-	{
-		cerr << "Parsing failed." << endl;
-		throw X2MshException();
-	}
-
-	cerr << "Succeeded." << endl;
+		throw Exception("Unsupported format.");
 }
